@@ -2,25 +2,13 @@ package com.example.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.example.R
 
-val SheraPrimaryFont = FontFamily(
-    Font(R.font.noto_sans_arabic, FontWeight.Normal),
-    Font(R.font.noto_sans_arabic, FontWeight.Bold),
-    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
-    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
-    Font(R.font.plus_jakarta_sans, FontWeight.Bold)
-)
+val SheraPrimaryFont = FontFamily.SansSerif
 
-val SheraMonoFont = FontFamily(
-    Font(R.font.roboto_mono, FontWeight.Normal),
-    Font(R.font.roboto_mono, FontWeight.Medium),
-    Font(R.font.roboto_mono, FontWeight.Bold)
-)
+val SheraMonoFont = FontFamily.Monospace
 
 val Typography = Typography(
     headlineLarge = TextStyle(

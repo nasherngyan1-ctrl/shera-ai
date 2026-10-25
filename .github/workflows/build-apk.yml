@@ -26,81 +26,26 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Configure Android SDK & Accept Licenses
+      - name: Set up Android SDK
         run: |
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           sudo mkdir -p "$ANDROID_SDK_ROOT/licenses"
-          sudo chmod -R 777 "$ANDROID_SDK_ROOT"
+          sudo chown -R $USER:$USER "$ANDROID_SDK_ROOT" || sudo chmod -R 777 "$ANDROID_SDK_ROOT"
           printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
-          SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses > /dev/null 2>&1 || true
-            "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" "cmdline-tools;latest" "platform-tools" "build-tools;36.0.0" "platforms;android-36" "platforms;android-36.1" || true
-          fi
-          if [ -f "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses > /dev/null 2>&1 || true
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
-          fi
-          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-36.1" ] && [ -d "$ANDROID_SDK_ROOT/platforms/android-36" ]; then
-            cp -r "$ANDROID_SDK_ROOT/platforms/android-36" "$ANDROID_SDK_ROOT/platforms/android-36.1"
-            sed -i 's/platforms;android-36"/platforms;android-36.1"/g' "$ANDROID_SDK_ROOT/platforms/android-36.1/package.xml" || true
-            sed -i 's/<api-level>36<\/api-level>/<api-level>36.1<\/api-level>/g' "$ANDROID_SDK_ROOT/platforms/android-36.1/package.xml" || true
-            sed -i 's/ro.build.version.sdk_full=36.0/ro.build.version.sdk_full=36.1/g' "$ANDROID_SDK_ROOT/platforms/android-36.1/build.prop" || true
-          fi
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Repair Binary Assets & Keystores
+      - name: Build Debug & Release APKs
         run: |
-          if [ ! -f ".env.example" ]; then
-            echo "GEMINI_API_KEY=PLACEHOLDER" > .env.example
-          fi
-          if [ ! -f ".env" ]; then
-            cp .env.example .env
-          fi
-          if [ -f "debug.keystore.base64" ]; then
-            tr -d '\r\n ' < debug.keystore.base64 | base64 -d > debug.keystore || rm -f debug.keystore
-          fi
-          if ! keytool -list -keystore debug.keystore -storepass android > /dev/null 2>&1; then
-            rm -f debug.keystore
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass android \
-              -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-          # Remove any raster mipmap PNG/WebP files that may have been UTF-8 corrupted during GitHub push
-          # (Adaptive XML icons in mipmap-anydpi-v26 + drawable/*.xml are pure XML and provide @mipmap/ic_launcher)
-          rm -f app/src/main/res/mipmap-*/*.webp app/src/main/res/mipmap-*/*.png
-          # Verify or repair TrueType fonts in app/src/main/res/font/ if corrupted by UTF-8 push
-          mkdir -p app/src/main/res/font
-          SYS_FONT=$(find /usr/share/fonts -name "*.ttf" -type f | head -n 1)
-          for f in plus_jakarta_sans.ttf roboto_mono.ttf noto_sans_arabic.ttf; do
-            TARGET="app/src/main/res/font/$f"
-            if [ ! -f "$TARGET" ] || ! file "$TARGET" | grep -qi "TrueType\|OpenType\|font"; then
-              cp "$SYS_FONT" "$TARGET"
-            fi
-          done
-
-      - name: Build SHÊRA AI APK
-        run: |
-          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          export ANDROID_HOME="$ANDROID_SDK_ROOT"
-          gradle :app:assembleDebug -x lint --no-daemon --no-configuration-cache -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" --stacktrace
-          mkdir -p dist-apk
-          cp app/build/outputs/apk/debug/app-debug.apk dist-apk/SHERA-AI.apk
-          cp app/build/outputs/apk/debug/app-debug.apk dist-apk/SHERA-AI-debug.apk
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug
 
       - name: Upload APK to GitHub Actions Artifacts
         uses: actions/upload-artifact@v4
