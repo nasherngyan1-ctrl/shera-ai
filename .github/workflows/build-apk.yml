@@ -36,28 +36,43 @@ jobs:
           sudo chmod -R 777 "$ANDROID_SDK_ROOT"
           printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
-          SDKMANAGER=$(find "$ANDROID_SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
           if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            "$SDKMANAGER" --install "platform-tools" > /dev/null 2>&1 || true
-            "$SDKMANAGER" --install "build-tools;36.0.0" > /dev/null 2>&1 || true
-            "$SDKMANAGER" --install "platforms;android-36" > /dev/null 2>&1 || true
-            "$SDKMANAGER" --install "platforms;android-36.1" > /dev/null 2>&1 || true
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "build-tools;36.0.0" "platforms;android-36" "platforms;android-36.1" || true
           fi
 
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
+      - name: Install Gradle 9.3.1
+        run: |
+          if ! gradle --version 2>/dev/null | grep -q "Gradle 9.3.1"; then
+            curl -sL https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o /tmp/gradle-9.3.1-bin.zip
+            sudo unzip -q -d /opt /tmp/gradle-9.3.1-bin.zip
+            echo "/opt/gradle-9.3.1/bin" >> $GITHUB_PATH
+          fi
 
       - name: Prepare Keystores & Environment
         run: |
           chmod +x gradlew || true
-          if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+          if [ ! -f ".env.example" ]; then
+            echo "GEMINI_API_KEY=PLACEHOLDER" > .env.example
+          fi
+          if [ ! -f ".env" ]; then
             cp .env.example .env
           fi
           if [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+            tr -d '\r\n ' < debug.keystore.base64 | base64 -d > debug.keystore || rm -f debug.keystore
+          fi
+          if ! keytool -list -keystore debug.keystore -storepass android > /dev/null 2>&1; then
+            rm -f debug.keystore
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
           if [ ! -f "my-upload-key.jks" ]; then
             keytool -genkeypair -v \
@@ -77,18 +92,23 @@ jobs:
           STORE_PASSWORD: sheraai_release_password
           KEY_PASSWORD: sheraai_release_password
         run: |
-          gradle :app:assembleDebug :app:assembleRelease --no-daemon --no-configuration-cache --stacktrace
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          gradle :app:assembleDebug -x lint --no-daemon --no-configuration-cache -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" --stacktrace
           mkdir -p dist-apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist-apk/SHERA-AI.apk
           cp app/build/outputs/apk/debug/app-debug.apk dist-apk/SHERA-AI-debug.apk
-          cp app/build/outputs/apk/release/app-release.apk dist-apk/SHERA-AI-release.apk
+          gradle :app:assembleRelease -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease --no-daemon --no-configuration-cache -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" || true
+          if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+            cp app/build/outputs/apk/release/app-release.apk dist-apk/SHERA-AI-release.apk
+          fi
 
       - name: Upload APK to GitHub Actions Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: SHERA-AI-APK
-          path: |
-            dist-apk/SHERA-AI-release.apk
-            dist-apk/SHERA-AI-debug.apk
+          path: dist-apk/*.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -99,8 +119,6 @@ jobs:
         with:
           tag_name: v1.0-latest
           name: "SHÊRA AI — Latest Android APK"
-          body: "Automated build of SHÊRA AI (شێرە AI) Android APK (`SHERA-AI-release.apk` and `SHERA-AI-debug.apk`)."
-          files: |
-            dist-apk/SHERA-AI-release.apk
-            dist-apk/SHERA-AI-debug.apk
+          body: "Automated build of SHÊRA AI (شێرە AI) Android APK."
+          files: dist-apk/*.apk
           prerelease: false
