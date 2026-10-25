@@ -1,0 +1,206 @@
+{
+  "entities": {
+    "WatchlistItem": {
+      "title": "WatchlistItem",
+      "description": "A cryptocurrency SPOT/USDT instrument saved to a user's personal watchlist.",
+      "type": "object",
+      "properties": {
+        "instId": {
+          "type": "string",
+          "description": "OKX instrument ID such as BTC-USDT"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authenticated owner UID"
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional user note for this pair"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when added (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": ["instId", "userId", "note", "createdAt", "updatedAt"]
+    },
+    "AlertRule": {
+      "title": "AlertRule",
+      "description": "A 24/7 monitoring alert rule configured by the user for an OKX SPOT/USDT pair.",
+      "type": "object",
+      "properties": {
+        "instId": {
+          "type": "string",
+          "description": "OKX instrument ID such as BTC-USDT"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authenticated owner UID"
+        },
+        "ruleType": {
+          "type": "string",
+          "enum": ["PRICE_ABOVE", "PRICE_BELOW", "SUPPORT_BREAK", "RESISTANCE_BREAK", "VOLUME_SPIKE", "SIGNAL_CHANGE"],
+          "description": "Condition type triggering the alert"
+        },
+        "thresholdValue": {
+          "type": "number",
+          "description": "Numeric threshold for price or volume ratio"
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["1m", "5m", "15m", "1H", "4H", "1D"],
+          "description": "Candle timeframe for evaluation"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the alert rule is active"
+        },
+        "cooldownMinutes": {
+          "type": "integer",
+          "description": "Minimum cooldown minutes before re-triggering to prevent spam"
+        },
+        "lastTriggeredEpochMs": {
+          "type": "integer",
+          "description": "Last triggered timestamp in epoch milliseconds"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": [
+        "instId",
+        "userId",
+        "ruleType",
+        "thresholdValue",
+        "timeframe",
+        "enabled",
+        "cooldownMinutes",
+        "lastTriggeredEpochMs",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SignalRecord": {
+      "title": "SignalRecord",
+      "description": "A saved technical or AI chart vision analysis record in the user's history.",
+      "type": "object",
+      "properties": {
+        "instId": {
+          "type": "string",
+          "description": "OKX instrument ID or analyzed chart symbol"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authenticated owner UID"
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": ["LIVE_QUANT", "CHART_IMAGE_AI"],
+          "description": "Origin of the analysis"
+        },
+        "timeframe": {
+          "type": "string",
+          "description": "Analyzed candle timeframe"
+        },
+        "signalCategory": {
+          "type": "string",
+          "enum": ["BUY_SETUP", "SELL_SETUP", "WATCH"],
+          "description": "Classification of the setup without profit guarantees"
+        },
+        "confluenceScore": {
+          "type": "integer",
+          "description": "Technical confluence score from 0 to 100"
+        },
+        "riskLevel": {
+          "type": "string",
+          "enum": ["LOW", "MEDIUM", "HIGH"],
+          "description": "Assessed technical risk level"
+        },
+        "entryPrice": {
+          "type": "number",
+          "description": "Suggested reference entry price"
+        },
+        "invalidationPrice": {
+          "type": "number",
+          "description": "Signal invalidation / stop-loss level"
+        },
+        "target1Price": {
+          "type": "number",
+          "description": "First potential target level"
+        },
+        "target2Price": {
+          "type": "number",
+          "description": "Second potential target level"
+        },
+        "summaryKurdish": {
+          "type": "string",
+          "description": "Technical reasoning and scenario summary in Central Kurdish (Sorani)"
+        },
+        "summaryEnglish": {
+          "type": "string",
+          "description": "Technical reasoning and scenario summary in English"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when recorded (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": [
+        "instId",
+        "userId",
+        "sourceType",
+        "timeframe",
+        "signalCategory",
+        "confluenceScore",
+        "riskLevel",
+        "entryPrice",
+        "invalidationPrice",
+        "target1Price",
+        "target2Price",
+        "summaryKurdish",
+        "summaryEnglish",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/watchlist/{instId}": {
+      "schema": {
+        "$ref": "#/entities/WatchlistItem"
+      },
+      "description": "Per-user saved OKX SPOT/USDT watchlist items"
+    },
+    "/users/{userId}/alertRules/{ruleId}": {
+      "schema": {
+        "$ref": "#/entities/AlertRule"
+      },
+      "description": "Per-user 24/7 market monitoring alert rules"
+    },
+    "/users/{userId}/signalHistory/{signalId}": {
+      "schema": {
+        "$ref": "#/entities/SignalRecord"
+      },
+      "description": "Per-user saved technical and AI chart vision analysis records"
+    }
+  }
+}

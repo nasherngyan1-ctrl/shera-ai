@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isNumber(val) {
+      return val is int || val is float;
+    }
+
+    function isValidWatchlistItem(data) {
+      return data.keys().hasAll(['instId', 'userId', 'note', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['instId', 'userId', 'note', 'createdAt', 'updatedAt']) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.instId is string && data.instId.size() >= 3 && data.instId.size() <= 30 &&
+             data.note is string && data.note.size() <= 200 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAlertRule(data) {
+      return data.keys().hasAll([
+               'instId', 'userId', 'ruleType', 'thresholdValue', 'timeframe',
+               'enabled', 'cooldownMinutes', 'lastTriggeredEpochMs', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'instId', 'userId', 'ruleType', 'thresholdValue', 'timeframe',
+               'enabled', 'cooldownMinutes', 'lastTriggeredEpochMs', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.instId is string && data.instId.size() >= 3 && data.instId.size() <= 30 &&
+             data.ruleType is string &&
+             data.ruleType in ['PRICE_ABOVE', 'PRICE_BELOW', 'SUPPORT_BREAK', 'RESISTANCE_BREAK', 'VOLUME_SPIKE', 'SIGNAL_CHANGE'] &&
+             isNumber(data.thresholdValue) && data.thresholdValue >= 0 &&
+             data.timeframe is string &&
+             data.timeframe in ['1m', '5m', '15m', '1H', '4H', '1D'] &&
+             data.enabled is bool &&
+             data.cooldownMinutes is int && data.cooldownMinutes >= 1 && data.cooldownMinutes <= 1440 &&
+             data.lastTriggeredEpochMs is int && data.lastTriggeredEpochMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSignalRecord(data) {
+      return data.keys().hasAll([
+               'instId', 'userId', 'sourceType', 'timeframe', 'signalCategory',
+               'confluenceScore', 'riskLevel', 'entryPrice', 'invalidationPrice',
+               'target1Price', 'target2Price', 'summaryKurdish', 'summaryEnglish',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'instId', 'userId', 'sourceType', 'timeframe', 'signalCategory',
+               'confluenceScore', 'riskLevel', 'entryPrice', 'invalidationPrice',
+               'target1Price', 'target2Price', 'summaryKurdish', 'summaryEnglish',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.instId is string && data.instId.size() >= 2 && data.instId.size() <= 30 &&
+             data.sourceType is string && data.sourceType in ['LIVE_QUANT', 'CHART_IMAGE_AI'] &&
+             data.timeframe is string && data.timeframe.size() >= 1 && data.timeframe.size() <= 10 &&
+             data.signalCategory is string && data.signalCategory in ['BUY_SETUP', 'SELL_SETUP', 'WATCH'] &&
+             data.confluenceScore is int && data.confluenceScore >= 0 && data.confluenceScore <= 100 &&
+             data.riskLevel is string && data.riskLevel in ['LOW', 'MEDIUM', 'HIGH'] &&
+             isNumber(data.entryPrice) && data.entryPrice >= 0 &&
+             isNumber(data.invalidationPrice) && data.invalidationPrice >= 0 &&
+             isNumber(data.target1Price) && data.target1Price >= 0 &&
+             isNumber(data.target2Price) && data.target2Price >= 0 &&
+             data.summaryKurdish is string && data.summaryKurdish.size() <= 2000 &&
+             data.summaryEnglish is string && data.summaryEnglish.size() <= 2000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId}/watchlist/{instId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(instId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(instId) && isValidWatchlistItem(incoming()) && incoming().instId == instId;
+      allow update: if isSignedIn() && isValidWatchlistItem(incoming()) &&
+                       request.auth.uid == userId && isValidId(userId) && isValidId(instId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().instId == existing().instId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['note', 'updatedAt']);
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(instId) && existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/alertRules/{ruleId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(ruleId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(ruleId) && isValidAlertRule(incoming());
+      allow update: if isSignedIn() && isValidAlertRule(incoming()) &&
+                       request.auth.uid == userId && isValidId(userId) && isValidId(ruleId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().instId == existing().instId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'ruleType', 'thresholdValue', 'timeframe', 'enabled',
+                         'cooldownMinutes', 'lastTriggeredEpochMs', 'updatedAt'
+                       ]);
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(ruleId) && existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/signalHistory/{signalId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(signalId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(signalId) && isValidSignalRecord(incoming());
+      allow update: if isSignedIn() && isValidSignalRecord(incoming()) &&
+                       request.auth.uid == userId && isValidId(userId) && isValidId(signalId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().instId == existing().instId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'summaryKurdish', 'summaryEnglish', 'updatedAt'
+                       ]);
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(signalId) && existing().userId == request.auth.uid;
+    }
+  }
+}

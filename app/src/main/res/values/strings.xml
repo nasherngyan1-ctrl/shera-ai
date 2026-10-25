@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">SHÊRA AI</string>
+    <string name="sign_in_with_google">چوونەژوورەوە بە گووگڵ • Sign in with Google</string>
+    <string name="app_subtitle_ku">سیستەمی پڕۆفیشناڵی شیکاری و چاودێری بازاڕی کریپتۆی OKX</string>
+    <string name="app_subtitle_en">Professional OKX Crypto Market Analysis &amp; AI Vision Desk</string>
+    <string name="disclaimer_no_financial_advice">ئاگاداری: هیچ نیشانەیەک مسۆگەری قازانج نییە و تەنها بۆ شیکاری تەکنیکییە.</string>
+</resources>
