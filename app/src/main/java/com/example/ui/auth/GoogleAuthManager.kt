@@ -60,7 +60,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.example.model.AppLanguage
 import com.example.ui.theme.CrimsonBear
 import com.example.ui.theme.EmeraldBull
@@ -82,6 +81,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 private const val TAG = "Auth"
+private const val FALLBACK_WEB_CLIENT_ID =
+    "197480984376-i58v5gb4bb8n4v56ff3btg6dmpv1o8s5.apps.googleusercontent.com"
+
+private fun resolveWebClientId(context: Context): String {
+    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+    if (resId != 0) {
+        val value = runCatching { context.getString(resId) }.getOrNull()
+        if (!value.isNullOrBlank()) {
+            return value
+        }
+    }
+    return FALLBACK_WEB_CLIENT_ID
+}
 
 fun attemptAutoSignIn(
     context: Context,
@@ -94,12 +106,7 @@ fun attemptAutoSignIn(
         onAuthSuccess()
         return
     }
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
-        onUnauthenticated()
-        return
-    }
+    val clientId = resolveWebClientId(context)
 
     val googleIdOption = GetGoogleIdOption.Builder()
         .setFilterByAuthorizedAccounts(true)
@@ -137,12 +144,7 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
-        onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
-        return
-    }
+    val clientId = resolveWebClientId(context)
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
     val request = GetCredentialRequest.Builder()
