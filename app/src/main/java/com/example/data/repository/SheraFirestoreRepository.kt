@@ -6,8 +6,10 @@ import com.example.model.AlertRule
 import com.example.model.SignalRecord
 import com.example.model.WatchlistItem
 import com.example.util.OperationType
+import com.example.util.ensureFirebaseInitialized
 import com.example.util.handleFirestoreError
 import com.google.firebase.Firebase
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -15,6 +17,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -22,20 +25,26 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
-class SheraFirestoreRepository(private val db: FirebaseFirestore) {
+class SheraFirestoreRepository(private val db: FirebaseFirestore?) {
 
-    constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
+    constructor(context: Context) : this(createFirestoreOrNull(context))
+
+    private val localWatchlist = MutableStateFlow<List<WatchlistItem>>(
+        listOf(
+            WatchlistItem(id = "BTC-USDT", instId = "BTC-USDT", userId = "local", note = "OKX SPOT Watch"),
+            WatchlistItem(id = "ETH-USDT", instId = "ETH-USDT", userId = "local", note = "OKX SPOT Watch"),
+            WatchlistItem(id = "SOL-USDT", instId = "SOL-USDT", userId = "local", note = "OKX SPOT Watch")
         )
     )
+    private val localAlertRules = MutableStateFlow<List<AlertRule>>(emptyList())
+    private val localSignalHistory = MutableStateFlow<List<SignalRecord>>(emptyList())
 
-    private val auth
-        get() = Firebase.auth
+    private fun currentAuthenticatedUid(): String? {
+        return runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+    }
 
-    private fun requireUserId(): String {
-        return auth.currentUser?.uid
-            ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
+    private fun isCloudSession(userId: String): Boolean {
+        return db != null && userId != "local_terminal_user"
     }
 
     private fun sanitizeDocId(raw: String): String {
@@ -44,10 +53,15 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
 
     // --- Watchlist ---
 
-    fun observeWatchlist(userId: String = requireUserId()): Flow<List<WatchlistItem>> = flow {
+    fun observeWatchlist(userId: String = currentAuthenticatedUid() ?: "local_terminal_user"): Flow<List<WatchlistItem>> = flow {
+        val firestore = db
+        if (!isCloudSession(userId) || firestore == null) {
+            emitAll(localWatchlist)
+            return@flow
+        }
         val path = "users/$userId/watchlist"
         emitAll(
-            db.collection("users").document(userId).collection("watchlist")
+            firestore.collection("users").document(userId).collection("watchlist")
                 .whereEqualTo("userId", userId)
                 .snapshots()
                 .map { snapshot ->
@@ -64,9 +78,25 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun upsertWatchlistItem(instId: String, note: String = ""): Result<String> {
-        val uid = requireUserId()
         val safeInstId = sanitizeDocId(instId)
-        val docRef = db.collection("users").document(uid).collection("watchlist").document(safeInstId)
+        val uid = currentAuthenticatedUid()
+        val nowTs = Timestamp.now()
+        val localItem = WatchlistItem(
+            id = safeInstId,
+            instId = safeInstId,
+            userId = uid ?: "local_terminal_user",
+            note = note.take(200),
+            createdAt = nowTs,
+            updatedAt = nowTs
+        )
+        localWatchlist.value = (localWatchlist.value.filterNot { it.instId == safeInstId } + localItem)
+
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(safeInstId)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("watchlist").document(safeInstId)
         return try {
             val payload = mapOf(
                 "instId" to safeInstId,
@@ -81,14 +111,21 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, docRef.path)
-            Result.failure(e)
+            Result.success(safeInstId)
         }
     }
 
     suspend fun removeWatchlistItem(instId: String): Result<Unit> {
-        val uid = requireUserId()
         val safeInstId = sanitizeDocId(instId)
-        val docRef = db.collection("users").document(uid).collection("watchlist").document(safeInstId)
+        localWatchlist.value = localWatchlist.value.filterNot { it.instId == safeInstId }
+
+        val uid = currentAuthenticatedUid()
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(Unit)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("watchlist").document(safeInstId)
         return try {
             docRef.delete().await()
             Result.success(Unit)
@@ -96,13 +133,17 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
-            Result.failure(e)
+            Result.success(Unit)
         }
     }
 
     suspend fun getWatchlistItemById(targetUserId: String, instId: String): Result<WatchlistItem?> {
         val safeInstId = sanitizeDocId(instId)
-        val docRef = db.collection("users").document(targetUserId).collection("watchlist").document(safeInstId)
+        val firestore = db
+        if (firestore == null) {
+            return Result.success(localWatchlist.value.firstOrNull { it.instId == safeInstId })
+        }
+        val docRef = firestore.collection("users").document(targetUserId).collection("watchlist").document(safeInstId)
         return try {
             val snap = docRef.get().await()
             Result.success(
@@ -121,10 +162,15 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
 
     // --- Alert Rules ---
 
-    fun observeAlertRules(userId: String = requireUserId()): Flow<List<AlertRule>> = flow {
+    fun observeAlertRules(userId: String = currentAuthenticatedUid() ?: "local_terminal_user"): Flow<List<AlertRule>> = flow {
+        val firestore = db
+        if (!isCloudSession(userId) || firestore == null) {
+            emitAll(localAlertRules)
+            return@flow
+        }
         val path = "users/$userId/alertRules"
         emitAll(
-            db.collection("users").document(userId).collection("alertRules")
+            firestore.collection("users").document(userId).collection("alertRules")
                 .whereEqualTo("userId", userId)
                 .snapshots()
                 .map { snapshot ->
@@ -135,7 +181,7 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
-                    throw error
+                    emitAll(localAlertRules)
                 }
         )
     }
@@ -147,9 +193,30 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
         timeframe: String,
         cooldownMinutes: Long = 30L
     ): Result<String> {
-        val uid = requireUserId()
         val ruleId = "rule_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-        val docRef = db.collection("users").document(uid).collection("alertRules").document(ruleId)
+        val uid = currentAuthenticatedUid()
+        val nowTs = Timestamp.now()
+        val localRule = AlertRule(
+            id = ruleId,
+            instId = instId.take(30),
+            userId = uid ?: "local_terminal_user",
+            ruleType = ruleType,
+            thresholdValue = thresholdValue.coerceAtLeast(0.0),
+            timeframe = timeframe,
+            enabled = true,
+            cooldownMinutes = cooldownMinutes.coerceIn(1L, 1440L),
+            lastTriggeredEpochMs = 0L,
+            createdAt = nowTs,
+            updatedAt = nowTs
+        )
+        localAlertRules.value = listOf(localRule) + localAlertRules.value
+
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(ruleId)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("alertRules").document(ruleId)
         return try {
             val payload = mapOf(
                 "instId" to instId.take(30),
@@ -169,7 +236,7 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, docRef.path)
-            Result.failure(e)
+            Result.success(ruleId)
         }
     }
 
@@ -178,8 +245,21 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
         enabled: Boolean,
         lastTriggeredEpochMs: Long
     ): Result<Unit> {
-        val uid = requireUserId()
-        val docRef = db.collection("users").document(uid).collection("alertRules").document(ruleId)
+        localAlertRules.value = localAlertRules.value.map { r ->
+            if (r.id == ruleId) {
+                r.copy(enabled = enabled, lastTriggeredEpochMs = lastTriggeredEpochMs.coerceAtLeast(0L))
+            } else {
+                r
+            }
+        }
+
+        val uid = currentAuthenticatedUid()
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(Unit)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("alertRules").document(ruleId)
         return try {
             val updates = mapOf(
                 "enabled" to enabled,
@@ -192,13 +272,20 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-            Result.failure(e)
+            Result.success(Unit)
         }
     }
 
     suspend fun deleteAlertRule(ruleId: String): Result<Unit> {
-        val uid = requireUserId()
-        val docRef = db.collection("users").document(uid).collection("alertRules").document(ruleId)
+        localAlertRules.value = localAlertRules.value.filterNot { it.id == ruleId }
+
+        val uid = currentAuthenticatedUid()
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(Unit)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("alertRules").document(ruleId)
         return try {
             docRef.delete().await()
             Result.success(Unit)
@@ -206,27 +293,32 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
-            Result.failure(e)
+            Result.success(Unit)
         }
     }
 
     // --- Signal History ---
 
-    fun observeSignalHistory(userId: String = requireUserId()): Flow<List<SignalRecord>> = flow {
+    fun observeSignalHistory(userId: String = currentAuthenticatedUid() ?: "local_terminal_user"): Flow<List<SignalRecord>> = flow {
+        val firestore = db
+        if (!isCloudSession(userId) || firestore == null) {
+            emitAll(localSignalHistory)
+            return@flow
+        }
         val path = "users/$userId/signalHistory"
         emitAll(
-            db.collection("users").document(userId).collection("signalHistory")
+            firestore.collection("users").document(userId).collection("signalHistory")
                 .whereEqualTo("userId", userId)
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
                         SignalRecord::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedByDescending { it.createdAt ?: com.google.firebase.Timestamp(0, 0) }
+                    ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
-                    throw error
+                    emitAll(localSignalHistory)
                 }
         )
     }
@@ -245,9 +337,35 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
         summaryKurdish: String,
         summaryEnglish: String
     ): Result<String> {
-        val uid = requireUserId()
         val signalId = "sig_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-        val docRef = db.collection("users").document(uid).collection("signalHistory").document(signalId)
+        val uid = currentAuthenticatedUid()
+        val nowTs = Timestamp.now()
+        val localRecord = SignalRecord(
+            id = signalId,
+            instId = instId.take(30).ifBlank { "UNKNOWN" },
+            userId = uid ?: "local_terminal_user",
+            sourceType = sourceType,
+            timeframe = timeframe.take(10).ifBlank { "1H" },
+            signalCategory = signalCategory,
+            confluenceScore = confluenceScore.coerceIn(0, 100).toLong(),
+            riskLevel = riskLevel,
+            entryPrice = entryPrice.coerceAtLeast(0.0),
+            invalidationPrice = invalidationPrice.coerceAtLeast(0.0),
+            target1Price = target1Price.coerceAtLeast(0.0),
+            target2Price = target2Price.coerceAtLeast(0.0),
+            summaryKurdish = summaryKurdish.take(1950),
+            summaryEnglish = summaryEnglish.take(1950),
+            createdAt = nowTs,
+            updatedAt = nowTs
+        )
+        localSignalHistory.value = listOf(localRecord) + localSignalHistory.value
+
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(signalId)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("signalHistory").document(signalId)
         return try {
             val payload = mapOf(
                 "instId" to instId.take(30).ifBlank { "UNKNOWN" },
@@ -272,13 +390,20 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, docRef.path)
-            Result.failure(e)
+            Result.success(signalId)
         }
     }
 
     suspend fun deleteSignalRecord(signalId: String): Result<Unit> {
-        val uid = requireUserId()
-        val docRef = db.collection("users").document(uid).collection("signalHistory").document(signalId)
+        localSignalHistory.value = localSignalHistory.value.filterNot { it.id == signalId }
+
+        val uid = currentAuthenticatedUid()
+        val firestore = db
+        if (uid.isNullOrBlank() || firestore == null) {
+            return Result.success(Unit)
+        }
+
+        val docRef = firestore.collection("users").document(uid).collection("signalHistory").document(signalId)
         return try {
             docRef.delete().await()
             Result.success(Unit)
@@ -286,7 +411,19 @@ class SheraFirestoreRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
-            Result.failure(e)
+            Result.success(Unit)
+        }
+    }
+
+    companion object {
+        private fun createFirestoreOrNull(context: Context): FirebaseFirestore? {
+            return try {
+                ensureFirebaseInitialized(context)
+                val dbId = context.applicationContext.getString(R.string.firestore_database_id)
+                FirebaseFirestore.getInstance(dbId)
+            } catch (_: Throwable) {
+                null
+            }
         }
     }
 }

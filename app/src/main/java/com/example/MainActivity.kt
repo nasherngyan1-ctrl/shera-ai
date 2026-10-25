@@ -84,6 +84,7 @@ import com.example.ui.theme.SheraGold
 import com.example.ui.theme.SheraGoldBright
 import com.example.ui.theme.TextSecondary
 import com.example.util.configureAppCheck
+import com.example.util.ensureFirebaseInitialized
 import com.example.viewmodel.CloudUiState
 import com.example.viewmodel.SheraMainViewModel
 import com.google.firebase.Firebase
@@ -94,12 +95,14 @@ import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOf
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // STEP 1: Mandatory App Check configuration with launch intent before UI or Firebase operations
+        // STEP 1: Mandatory Firebase & App Check configuration with launch intent before UI or Firebase operations
+        ensureFirebaseInitialized(this)
         configureAppCheck(this, intent)
 
         enableEdgeToEdge()
@@ -116,38 +119,58 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
-    val listener = FirebaseAuth.AuthStateListener { auth ->
-        trySend(auth.currentUser)
+internal fun FirebaseAuth?.safeAuthStateFlow(): Flow<FirebaseUser?> {
+    if (this == null) return flowOf(null)
+    return callbackFlow {
+        val listener = FirebaseAuth.AuthStateListener { auth ->
+            trySend(auth.currentUser)
+        }
+        runCatching { addAuthStateListener(listener) }
+            .onFailure { trySend(null) }
+        awaitClose {
+            runCatching { removeAuthStateListener(listener) }
+        }
     }
-    addAuthStateListener(listener)
-    awaitClose { removeAuthStateListener(listener) }
 }
 
 @Composable
-fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
-    var unauthLanguage by remember { mutableStateOf(AppLanguage.KURDISH_SORANI) }
+fun AppNavigation() {
+    val context = LocalContext.current
+    val auth = remember(context) {
+        ensureFirebaseInitialized(context)
+        runCatching { Firebase.auth }.getOrNull()
+    }
+    val currentUser by auth.safeAuthStateFlow()
+        .collectAsStateWithLifecycle(initialValue = runCatching { auth?.currentUser }.getOrNull())
+    var unauthLanguage by rememberSaveable { mutableStateOf(AppLanguage.KURDISH_SORANI) }
+    var directTerminalMode by rememberSaveable { mutableStateOf(false) }
     val user = currentUser
 
-    if (user == null) {
+    if (user == null && !directTerminalMode) {
         CompositionLocalProvider(
             LocalLayoutDirection provides if (unauthLanguage.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
         ) {
             AuthScreen(
                 language = unauthLanguage,
                 onLanguageChange = { unauthLanguage = it },
-                onAuthSuccess = {}
+                onAuthSuccess = {},
+                onContinueDirectTerminal = { directTerminalMode = true }
             )
         }
     } else {
-        SheraAuthenticatedDashboard(currentUserId = user.uid)
+        SheraAuthenticatedDashboard(
+            currentUserId = user?.uid ?: "local_terminal_user",
+            onExitDirectTerminal = { directTerminalMode = false }
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SheraAuthenticatedDashboard(currentUserId: String) {
+fun SheraAuthenticatedDashboard(
+    currentUserId: String,
+    onExitDirectTerminal: () -> Unit = {}
+) {
     val viewModel: SheraMainViewModel = viewModel(
         key = currentUserId,
         factory = viewModelFactory {
@@ -155,8 +178,11 @@ fun SheraAuthenticatedDashboard(currentUserId: String) {
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
+                ensureFirebaseInitialized(app)
+                val db = runCatching {
+                    val databaseId = app.getString(R.string.firestore_database_id)
+                    FirebaseFirestore.getInstance(databaseId)
+                }.getOrNull()
                 SheraMainViewModel(
                     firestoreRepository = SheraFirestoreRepository(db),
                     currentUserId = currentUserId
@@ -167,7 +193,9 @@ fun SheraAuthenticatedDashboard(currentUserId: String) {
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) {
+        runCatching { CredentialManager.create(context) }.getOrNull()
+    }
 
     val language by viewModel.language.collectAsStateWithLifecycle()
     val tickers by viewModel.tickers.collectAsStateWithLifecycle()
@@ -266,7 +294,7 @@ fun SheraAuthenticatedDashboard(currentUserId: String) {
                                 signOut(
                                     context = context,
                                     credentialManager = credentialManager,
-                                    onSignOutComplete = {},
+                                    onSignOutComplete = onExitDirectTerminal,
                                     scope = scope
                                 )
                             },

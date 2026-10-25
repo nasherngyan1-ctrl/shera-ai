@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.Language
@@ -36,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +72,7 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.SheraGold
 import com.example.ui.theme.SheraGoldBright
 import com.example.ui.theme.TextSecondary
+import com.example.util.ensureFirebaseInitialized
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -97,13 +101,22 @@ private fun resolveWebClientId(context: Context): String {
 
 fun attemptAutoSignIn(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onAuthSuccess: () -> Unit,
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    if (Firebase.auth.currentUser != null) {
+    if (!ensureFirebaseInitialized(context)) {
+        onUnauthenticated()
+        return
+    }
+    val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+    if (currentUser != null) {
         onAuthSuccess()
+        return
+    }
+    if (credentialManager == null) {
+        onUnauthenticated()
         return
     }
     val clientId = resolveWebClientId(context)
@@ -120,7 +133,8 @@ fun attemptAutoSignIn(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context, request)
+            val activityContext = context as? Activity ?: context
+            val result = credentialManager.getCredential(activityContext, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -130,7 +144,7 @@ fun attemptAutoSignIn(
             } else {
                 onUnauthenticated()
             }
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
             onUnauthenticated()
         }
     }
@@ -138,12 +152,16 @@ fun attemptAutoSignIn(
 
 fun onGoogleSignInClicked(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onAuthSuccess: () -> Unit,
     onAuthError: (String) -> Unit,
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
+    if (!ensureFirebaseInitialized(context) || credentialManager == null) {
+        onAuthError("Google Sign-In service is unavailable on this device. You can enter the terminal directly below.")
+        return
+    }
     val clientId = resolveWebClientId(context)
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
@@ -167,25 +185,29 @@ fun onGoogleSignInClicked(
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "Google Sign-In cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
-        } catch (e: Exception) {
-            Log.e(TAG, "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Sign in failed")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Google Sign-In failed", t)
+            onAuthError(t.localizedMessage ?: "Sign in failed")
         }
     }
 }
 
 fun signOut(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onSignOutComplete: () -> Unit,
     scope: CoroutineScope
 ) {
-    Firebase.auth.signOut()
+    runCatching {
+        if (ensureFirebaseInitialized(context)) {
+            Firebase.auth.signOut()
+        }
+    }
     scope.launch {
         try {
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear credential state", e)
+            credentialManager?.clearCredentialState(ClearCredentialStateRequest())
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to clear credential state", t)
         } finally {
             onSignOutComplete()
         }
@@ -196,11 +218,14 @@ fun signOut(
 fun AuthScreen(
     language: AppLanguage,
     onLanguageChange: (AppLanguage) -> Unit,
-    onAuthSuccess: () -> Unit
+    onAuthSuccess: () -> Unit,
+    onContinueDirectTerminal: () -> Unit = onAuthSuccess
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) {
+        runCatching { CredentialManager.create(context) }.getOrNull()
+    }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val isKu = language == AppLanguage.KURDISH_SORANI
@@ -242,6 +267,7 @@ fun AuthScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -376,6 +402,31 @@ fun AuthScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        errorMessage = null
+                        onContinueDirectTerminal()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("guest_continue_button")
+                ) {
+                    Text(
+                        text = if (isKu) {
+                            "چوونەژوورەوەی ڕاستەوخۆ بۆ ناو بەرنامە • Enter Terminal"
+                        } else {
+                            "Enter SHÊRA AI Terminal Directly"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = SheraGoldBright,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
