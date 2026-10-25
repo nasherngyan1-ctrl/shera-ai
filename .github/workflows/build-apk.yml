@@ -2,7 +2,9 @@ name: Build SHÊRA AI Android APK
 
 on:
   push:
+    branches: [ "*" ]
   pull_request:
+    branches: [ "*" ]
   workflow_dispatch:
 
 permissions:
@@ -24,20 +26,30 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Android SDK & Platforms (36 / 36.1)
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Licenses & Install Required SDK Packages
+      - name: Accept Android SDK Licenses & Install SDK 36.1
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "build-tools;36.0.0" "platforms;android-36" "platforms;android-36.1" || true
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platform-tools" || true
+            "$SDKMANAGER" "build-tools;36.0.0" || true
+            "$SDKMANAGER" "platforms;android-36" || true
+            "$SDKMANAGER" "platforms;android-36.1" || true
+          fi
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Prepare Keystore & Environment
+      - name: Prepare Keystores & Environment
         run: |
           chmod +x gradlew || true
           if [ ! -f ".env" ] && [ -f ".env.example" ]; then
@@ -46,18 +58,48 @@ jobs:
           if [ -f "debug.keystore.base64" ]; then
             base64 -d debug.keystore.base64 > debug.keystore
           fi
+          if [ ! -f "my-upload-key.jks" ]; then
+            keytool -genkeypair -v \
+              -keystore my-upload-key.jks \
+              -alias upload \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass sheraai_release_password \
+              -keypass sheraai_release_password \
+              -dname "CN=SheraAI, OU=Mobile, O=SheraAI, L=Erbil, S=KRG, C=IQ"
+          fi
 
-      - name: Build Debug APK
+      - name: Build Debug & Release APKs
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: sheraai_release_password
+          KEY_PASSWORD: sheraai_release_password
         run: |
-          ./gradlew :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/SHERA-AI-debug.apk
+          gradle :app:assembleDebug :app:assembleRelease --no-daemon --no-configuration-cache --stacktrace
+          mkdir -p dist-apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist-apk/SHERA-AI-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk dist-apk/SHERA-AI-release.apk
 
       - name: Upload APK to GitHub Actions Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: SHERA-AI-APK
           path: |
-            app/build/outputs/apk/debug/SHERA-AI-debug.apk
-            app/build/outputs/apk/debug/app-debug.apk
+            dist-apk/SHERA-AI-release.apk
+            dist-apk/SHERA-AI-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish APK to GitHub Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0-latest
+          name: "SHÊRA AI — Latest Android APK"
+          body: "Automated build of SHÊRA AI (شێرە AI) Android APK (`SHERA-AI-release.apk` and `SHERA-AI-debug.apk`)."
+          files: |
+            dist-apk/SHERA-AI-release.apk
+            dist-apk/SHERA-AI-debug.apk
+          prerelease: false

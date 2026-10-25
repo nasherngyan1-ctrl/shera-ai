@@ -30,12 +30,3 @@ run {
   }
 }
 
-// On CI / GitHub Actions where release signing environment variables (STORE_PASSWORD) are not set,
-// skip Release tasks during `./gradlew build` so the build produces the Debug APK without failing on missing release keystore.
-subprojects {
-  tasks.configureEach {
-    if (System.getenv("STORE_PASSWORD").isNullOrEmpty() && name.contains("Release")) {
-      enabled = false
-    }
-  }
-}
