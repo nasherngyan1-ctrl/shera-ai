@@ -26,22 +26,23 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK Licenses & Install SDK 36.1
+      - name: Configure Android SDK & Accept Licenses
         run: |
-          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          mkdir -p "$ANDROID_SDK_ROOT/licenses"
-          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          sudo mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          sudo chmod -R 777 "$ANDROID_SDK_ROOT"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
-          SDKMANAGER=$(find "$ANDROID_SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1)
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
           if [ -n "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            "$SDKMANAGER" "platform-tools" || true
-            "$SDKMANAGER" "build-tools;36.0.0" || true
-            "$SDKMANAGER" "platforms;android-36" || true
-            "$SDKMANAGER" "platforms;android-36.1" || true
+            "$SDKMANAGER" --install "platform-tools" > /dev/null 2>&1 || true
+            "$SDKMANAGER" --install "build-tools;36.0.0" > /dev/null 2>&1 || true
+            "$SDKMANAGER" --install "platforms;android-36" > /dev/null 2>&1 || true
+            "$SDKMANAGER" --install "platforms;android-36.1" > /dev/null 2>&1 || true
           fi
 
       - name: Set up Gradle 9.3.1
