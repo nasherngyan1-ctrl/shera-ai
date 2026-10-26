@@ -29,6 +29,8 @@ import com.example.model.RiskLevel
 import com.example.model.SignalCategory
 import com.example.model.SignalRecord
 import com.example.model.WatchlistItem
+import com.example.model.ChatMessage
+import com.example.model.MessageSender
 import com.example.util.AlertNotificationHelper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -141,6 +143,23 @@ class SheraMainViewModel(
     private val _aiState = MutableStateFlow<AiAnalysisUiState>(AiAnalysisUiState.Idle)
     val aiState: StateFlow<AiAnalysisUiState> = _aiState.asStateFlow()
 
+    // Unlimited AI Chat & Live 1-Min Signal state
+    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(
+        listOf(
+            ChatMessage(
+                text = "سڵاو! من شێرە AI (SHÊRA AI) ئەندازیاری فەرمی پشک و دراوی ئۆکس مە. لێرە دەتوانیت بێسنوور چات بکەیت یان وێنەی چارت بنێریت بۆ ئەوەی دەستبەجێ پێتبڵێم زیان دەکات یان قازانج، لەگەڵ پێشبینی ١ دەقەیی.",
+                sender = MessageSender.AI
+            )
+        )
+    )
+    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages.asStateFlow()
+
+    private val _inputMessage = MutableStateFlow("")
+    val inputMessage: StateFlow<String> = _inputMessage.asStateFlow()
+
+    private val _liveMinuteSignal = MutableStateFlow("🟢 ئێستا BTC-USDT بکڕە: پێشبینی بەرزبوونەوەی +3.5% لە ١٠ دەقەی داهاتوودا")
+    val liveMinuteSignal: StateFlow<String> = _liveMinuteSignal.asStateFlow()
+
     // Backtesting state
     private val _backtestState = MutableStateFlow<BacktestUiState>(BacktestUiState.Idle)
     val backtestState: StateFlow<BacktestUiState> = _backtestState.asStateFlow()
@@ -191,6 +210,90 @@ class SheraMainViewModel(
 
     init {
         startMarketMonitoringLoop()
+        startLiveMinuteSignalLoop()
+    }
+
+    private fun startLiveMinuteSignalLoop() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(60_000L)
+                val opps = opportunities.value
+                if (opps.isNotEmpty()) {
+                    val top = opps.random()
+                    val isKu = _language.value == AppLanguage.KURDISH_SORANI
+                    val msg = if (isKu) {
+                        "🟢 ئێستا ${top.instId} بکڕە: پێشبینی قازانجی +${QuantIndicatorEngine.formatNum(top.ticker.change24hPct.coerceAtLeast(1.5), 1)}% لە ١٠ دەقەی داهاتوودا"
+                    } else {
+                        "🟢 BUY ${top.instId} Now: Expected +${QuantIndicatorEngine.formatNum(top.ticker.change24hPct.coerceAtLeast(1.5), 1)}% gain in next 10 mins"
+                    }
+                    _liveMinuteSignal.value = msg
+                }
+            }
+        }
+    }
+
+    fun setInputMessage(msg: String) {
+        _inputMessage.value = msg
+    }
+
+    fun sendChatMessage(text: String, bitmap: Bitmap?) {
+        val userMsg = ChatMessage(
+            text = text.ifBlank { if (bitmap != null) "شیکاری ئەم وێنەی چارتە بکە (زیان دەکات یان قازانج؟)" else "پرسیاری بازاڕ" },
+            sender = MessageSender.USER,
+            bitmap = bitmap
+        )
+        _chatMessages.value = _chatMessages.value + userMsg
+
+        viewModelScope.launch {
+            _aiState.value = AiAnalysisUiState.Loading
+            val setup = _selectedSetup.value
+            val derivatives = _derivativesTelemetry.value
+            val modelChoice = _selectedAiModel.value
+
+            val result = if (bitmap != null) {
+                aiService.analyzeChartImage(
+                    chartBitmap = bitmap,
+                    selectedModel = modelChoice,
+                    userQuestion = text,
+                    attachedLiveSetup = setup,
+                    derivativesTelemetry = derivatives
+                )
+            } else {
+                val targetSetup = setup ?: opportunities.value.firstOrNull()
+                if (targetSetup != null) {
+                    aiService.analyzeLivePairWithAi(
+                        setup = targetSetup,
+                        selectedModel = modelChoice,
+                        userQuestion = text,
+                        derivativesTelemetry = derivatives
+                    )
+                } else {
+                    Result.failure(IllegalStateException("No market telemetry found. Please upload a chart image or select a pair."))
+                }
+            }
+
+            result.onSuccess { forecast ->
+                _aiState.value = AiAnalysisUiState.Success(forecast)
+                val aiReplyText = if (_language.value == AppLanguage.KURDISH_SORANI) {
+                    forecast.marketStructureSummaryKu
+                } else {
+                    forecast.marketStructureSummaryEn
+                }
+                val aiMsg = ChatMessage(
+                    text = aiReplyText,
+                    sender = MessageSender.AI,
+                    forecast = forecast
+                )
+                _chatMessages.value = _chatMessages.value + aiMsg
+            }.onFailure { err ->
+                _aiState.value = AiAnalysisUiState.Error(err.message ?: "Analysis failed")
+                val errMsg = ChatMessage(
+                    text = "⚠️ هەڵە لە شیکاری AI: ${err.message}",
+                    sender = MessageSender.AI
+                )
+                _chatMessages.value = _chatMessages.value + errMsg
+            }
+        }
     }
 
     private fun startMarketMonitoringLoop() {
