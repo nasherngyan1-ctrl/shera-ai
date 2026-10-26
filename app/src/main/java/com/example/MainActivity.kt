@@ -76,6 +76,7 @@ import com.example.ui.auth.SheraLionEmblem
 import com.example.ui.auth.signOut
 import com.example.ui.screens.TopProfitTab
 import com.example.ui.screens.BackgroundAlertsTab
+import com.example.ui.screens.AiVisionTradingTab
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.ObsidianBackground
 import com.example.ui.theme.ObsidianSurface
@@ -134,34 +135,7 @@ internal fun FirebaseAuth?.safeAuthStateFlow(): Flow<FirebaseUser?> {
 
 @Composable
 fun AppNavigation() {
-    val context = LocalContext.current
-    val auth = remember(context) {
-        ensureFirebaseInitialized(context)
-        runCatching { Firebase.auth }.getOrNull()
-    }
-    val currentUser by auth.safeAuthStateFlow()
-        .collectAsStateWithLifecycle(initialValue = runCatching { auth?.currentUser }.getOrNull())
-    var unauthLanguage by rememberSaveable { mutableStateOf(AppLanguage.KURDISH_SORANI) }
-    var directTerminalMode by rememberSaveable { mutableStateOf(false) }
-    val user = currentUser
-
-    if (user == null && !directTerminalMode) {
-        CompositionLocalProvider(
-            LocalLayoutDirection provides if (unauthLanguage.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-        ) {
-            AuthScreen(
-                language = unauthLanguage,
-                onLanguageChange = { unauthLanguage = it },
-                onAuthSuccess = {},
-                onContinueDirectTerminal = { directTerminalMode = true }
-            )
-        }
-    } else {
-        SheraAuthenticatedDashboard(
-            currentUserId = user?.uid ?: "local_terminal_user",
-            onExitDirectTerminal = { directTerminalMode = false }
-        )
-    }
+    SheraAuthenticatedDashboard(currentUserId = "guest_trader")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -320,7 +294,7 @@ fun SheraAuthenticatedDashboard(
                         selected = currentTab == 0,
                         onClick = { currentTab = 0 },
                         icon = { Icon(Icons.Default.TrendingUp, contentDescription = null) },
-                        label = { Text(if (isKu) "باشترین قازانج و کڕین" else "Top Profit") },
+                        label = { Text(if (isKu) "باشترین قازانج" else "Top Profit") },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Color(0xFF0A0D14),
                             selectedTextColor = SheraGoldBright,
@@ -331,6 +305,18 @@ fun SheraAuthenticatedDashboard(
                     NavigationBarItem(
                         selected = currentTab == 1,
                         onClick = { currentTab = 1 },
+                        icon = { Icon(Icons.Default.Psychology, contentDescription = null) },
+                        label = { Text(if (isKu) "چات و وێنە" else "AI Chat & Vision") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF0A0D14),
+                            selectedTextColor = SheraGoldBright,
+                            indicatorColor = SheraGold
+                        ),
+                        modifier = Modifier.testTag("nav_tab_ai_vision")
+                    )
+                    NavigationBarItem(
+                        selected = currentTab == 2,
+                        onClick = { currentTab = 2 },
                         icon = { Icon(Icons.Default.NotificationsActive, contentDescription = null) },
                         label = { Text(if (isKu) "چاودێری ٢٤/٧" else "24/7 Alerts") },
                         colors = NavigationBarItemDefaults.colors(
@@ -409,11 +395,27 @@ fun SheraAuthenticatedDashboard(
                             onSelectChartMode = viewModel::setChartDisplayMode,
                             onRefreshClick = { viewModel.refreshMarketsAndSelectedPair(true) },
                             onOpenInAiVision = {
+                                currentTab = 1
                                 viewModel.captureCurrentOkxChartAsBitmapAndAnalyze()
                             }
                         )
 
-                        1 -> BackgroundAlertsTab(
+                        1 -> AiVisionTradingTab(
+                            selectedInstId = selectedInstId,
+                            selectedSetup = selectedSetup,
+                            selectedAiModel = selectedAiModel,
+                            selectedChartBitmap = selectedChartBitmap,
+                            aiUserQuestion = aiUserQuestion,
+                            aiState = aiState,
+                            language = language,
+                            onSelectModel = viewModel::setAiModelChoice,
+                            onBitmapSelected = viewModel::setSelectedChartBitmap,
+                            onQuestionChange = viewModel::setAiUserQuestion,
+                            onCaptureCurrentChartAndAnalyze = { viewModel.captureCurrentOkxChartAsBitmapAndAnalyze() },
+                            onRunAiAnalysis = { viewModel.analyzeCurrentImageOrPairWithAi() }
+                        )
+
+                        2 -> BackgroundAlertsTab(
                             selectedInstId = selectedInstId,
                             alertRules = alertRules,
                             signalHistory = signalHistory,
