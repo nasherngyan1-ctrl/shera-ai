@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -73,10 +74,8 @@ import com.example.model.AppLanguage
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.SheraLionEmblem
 import com.example.ui.auth.signOut
-import com.example.ui.screens.AiVisionTradingTab
-import com.example.ui.screens.BacktestAndAlertsTab
-import com.example.ui.screens.MarketsAndChartTab
-import com.example.ui.screens.OpportunityScannerTab
+import com.example.ui.screens.TopProfitTab
+import com.example.ui.screens.BackgroundAlertsTab
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.ObsidianBackground
 import com.example.ui.theme.ObsidianSurface
@@ -320,50 +319,26 @@ fun SheraAuthenticatedDashboard(
                     NavigationBarItem(
                         selected = currentTab == 0,
                         onClick = { currentTab = 0 },
-                        icon = { Icon(Icons.Default.CandlestickChart, contentDescription = null) },
-                        label = { Text(if (isKu) "بازاڕ و چارت" else "Markets") },
+                        icon = { Icon(Icons.Default.TrendingUp, contentDescription = null) },
+                        label = { Text(if (isKu) "باشترین قازانج و کڕین" else "Top Profit") },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Color(0xFF0A0D14),
                             selectedTextColor = SheraGoldBright,
                             indicatorColor = SheraGold
                         ),
-                        modifier = Modifier.testTag("nav_tab_markets")
+                        modifier = Modifier.testTag("nav_tab_top_profit")
                     )
                     NavigationBarItem(
                         selected = currentTab == 1,
                         onClick = { currentTab = 1 },
-                        icon = { Icon(Icons.Default.Radar, contentDescription = null) },
-                        label = { Text(if (isKu) "دۆزەرەوەی هەل" else "Scanner") },
+                        icon = { Icon(Icons.Default.NotificationsActive, contentDescription = null) },
+                        label = { Text(if (isKu) "چاودێری ٢٤/٧" else "24/7 Alerts") },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Color(0xFF0A0D14),
                             selectedTextColor = SheraGoldBright,
                             indicatorColor = SheraGold
                         ),
-                        modifier = Modifier.testTag("nav_tab_scanner")
-                    )
-                    NavigationBarItem(
-                        selected = currentTab == 2,
-                        onClick = { currentTab = 2 },
-                        icon = { Icon(Icons.Default.Psychology, contentDescription = null) },
-                        label = { Text(if (isKu) "شیکاری وێنە AI" else "AI Vision") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color(0xFF0A0D14),
-                            selectedTextColor = SheraGoldBright,
-                            indicatorColor = SheraGold
-                        ),
-                        modifier = Modifier.testTag("nav_tab_ai_vision")
-                    )
-                    NavigationBarItem(
-                        selected = currentTab == 3,
-                        onClick = { currentTab = 3 },
-                        icon = { Icon(Icons.Default.Analytics, contentDescription = null) },
-                        label = { Text(if (isKu) "تاقیکردنەوە و زەنگ" else "Backtest & Alerts") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color(0xFF0A0D14),
-                            selectedTextColor = SheraGoldBright,
-                            indicatorColor = SheraGold
-                        ),
-                        modifier = Modifier.testTag("nav_tab_backtest_alerts")
+                        modifier = Modifier.testTag("nav_tab_background_alerts")
                     )
                 }
             }
@@ -417,10 +392,8 @@ fun SheraAuthenticatedDashboard(
 
                 Box(modifier = Modifier.weight(1f)) {
                     when (currentTab) {
-                        0 -> MarketsAndChartTab(
+                        0 -> TopProfitTab(
                             tickers = tickers,
-                            watchlistItems = watchlistItems,
-                            connectionStatus = connectionStatus,
                             selectedInstId = selectedInstId,
                             selectedTimeframe = selectedTimeframe,
                             chartDisplayMode = chartDisplayMode,
@@ -428,73 +401,23 @@ fun SheraAuthenticatedDashboard(
                             selectedSetup = selectedSetup,
                             derivativesTelemetry = derivativesTelemetry,
                             isChartLoading = isChartLoading,
-                            searchQuery = searchQuery,
-                            showWatchlistOnly = showWatchlistOnly,
-                            currentPage = currentPage,
-                            pageSize = viewModel.pageSize,
+                            opportunities = opportunities,
+                            isScannerRunning = isScannerRunning,
                             language = language,
-                            onSearchQueryChange = viewModel::setSearchQuery,
-                            onToggleWatchlistOnly = viewModel::setShowWatchlistOnly,
                             onSelectPair = viewModel::selectPair,
                             onSelectTimeframe = viewModel::selectTimeframe,
                             onSelectChartMode = viewModel::setChartDisplayMode,
-                            onToggleWatchlistItem = viewModel::toggleWatchlist,
-                            onPageChange = viewModel::setPage,
                             onRefreshClick = { viewModel.refreshMarketsAndSelectedPair(true) },
-                            onSendChartToAiVision = {
-                                currentTab = 2
-                                viewModel.captureCurrentOkxChartAsBitmapAndAnalyze()
-                            },
-                            onSaveSetupToCloud = viewModel::saveLiveQuantSetupToCloud
-                        )
-
-                        1 -> OpportunityScannerTab(
-                            opportunities = opportunities,
-                            isScannerRunning = isScannerRunning,
-                            selectedTimeframe = selectedTimeframe,
-                            categoryFilter = scannerCategoryFilter,
-                            riskFilter = scannerRiskFilter,
-                            structureFilter = scannerStructureFilter,
-                            language = language,
-                            onSelectTimeframe = viewModel::selectTimeframe,
-                            onCategoryFilterChange = viewModel::setScannerCategoryFilter,
-                            onRiskFilterChange = viewModel::setScannerRiskFilter,
-                            onStructureFilterChange = viewModel::setScannerStructureFilter,
-                            onRunScannerClick = viewModel::runOpportunityScanner,
-                            onOpenPairInChart = { instId ->
-                                viewModel.selectPair(instId)
-                                currentTab = 0
-                            },
-                            onOpenPairInAiVision = { instId ->
-                                viewModel.selectPair(instId)
-                                currentTab = 2
+                            onOpenInAiVision = {
                                 viewModel.captureCurrentOkxChartAsBitmapAndAnalyze()
                             }
                         )
 
-                        2 -> AiVisionTradingTab(
+                        1 -> BackgroundAlertsTab(
                             selectedInstId = selectedInstId,
-                            selectedSetup = selectedSetup,
-                            selectedAiModel = selectedAiModel,
-                            selectedChartBitmap = selectedChartBitmap,
-                            aiUserQuestion = aiUserQuestion,
-                            aiState = aiState,
-                            language = language,
-                            onSelectModel = viewModel::setAiModelChoice,
-                            onBitmapSelected = viewModel::setSelectedChartBitmap,
-                            onQuestionChange = viewModel::setAiUserQuestion,
-                            onCaptureCurrentChartAndAnalyze = viewModel::captureCurrentOkxChartAsBitmapAndAnalyze,
-                            onRunAiAnalysis = viewModel::analyzeCurrentImageOrPairWithAi
-                        )
-
-                        3 -> BacktestAndAlertsTab(
-                            selectedInstId = selectedInstId,
-                            selectedTimeframe = selectedTimeframe,
-                            backtestState = backtestState,
                             alertRules = alertRules,
                             signalHistory = signalHistory,
                             language = language,
-                            onRunBacktest = viewModel::runWalkForwardBacktest,
                             onCreateAlertRule = viewModel::addAlertRule,
                             onToggleAlertRule = viewModel::toggleAlertRule,
                             onDeleteAlertRule = viewModel::deleteAlertRule,
